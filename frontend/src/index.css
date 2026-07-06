@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Artly design tokens — Swiss minimal, warm gallery neutrals.
+   Bone / ink / muted-clay. Both light and dark are first-class.
+   Colors are space-separated RGB channels so Tailwind's
+   `rgb(var(--x) / <alpha>)` utilities work.
+   ========================================================================== */
+:root,
+[data-theme="light"] {
+  --bg: 245 243 238;        /* bone paper            */
+  --bg-2: 252 251 248;      /* raised surface / cards */
+  --fg: 28 25 21;           /* warm ink              */
+  --muted: 124 118 107;     /* warm gray             */
+  --border: 28 25 21;       /* ink, used at low alpha for hairlines */
+  --primary: 176 91 64;     /* muted clay / terracotta */
+  --primary-fg: 250 249 246;
+  --ring: 176 91 64;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: 20 18 16;           /* warm near-black        */
+  --bg-2: 29 26 23;         /* raised surface / cards */
+  --fg: 237 232 223;        /* warm paper             */
+  --muted: 150 142 130;     /* warm gray              */
+  --border: 237 232 223;    /* paper, low alpha hairlines */
+  --primary: 201 126 98;    /* clay, lifted for dark  */
+  --primary-fg: 22 19 16;
+  --ring: 201 126 98;
+  color-scheme: dark;
+}
+
+* {
+  border-color: rgb(var(--border) / 0.1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: theme("fontFamily.sans");
+  font-feature-settings: "cv05" 1, "ss01" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* ---- Surfaces --------------------------------------------------------------
+   These class names are kept for compatibility with existing markup, but they
+   are no longer "glass": flat, opaque, hairline-bordered surfaces. No blur, no
+   sheen, no glow. */
+@layer components {
+  .glass {
+    background: rgb(var(--bg-2));
+    border: 1px solid rgb(var(--border) / 0.1);
+  }
+  .glass-strong {
+    background: rgb(var(--bg-2));
+    border: 1px solid rgb(var(--border) / 0.12);
+  }
+  /* Legacy highlight class — intentionally a no-op now. */
+  .sheen {
+  }
+
+  /* Section / eyebrow label: mono, tracked-out, uppercase. */
+  .label {
+    font-family: theme("fontFamily.mono");
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgb(var(--muted));
+  }
+
+  /* Numeric / tabular figures for stats and list numbering. */
+  .tnum {
+    font-family: theme("fontFamily.mono");
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Horizontal scroll without a visible scrollbar (mobile chip/nav rows). */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ring-focus {
+    outline: none;
+  }
+  .ring-focus:focus-visible {
+    box-shadow: 0 0 0 2px rgb(var(--bg)), 0 0 0 3.5px rgb(var(--ring) / 0.85);
+  }
+}
+
+/* Scrollbars — quiet, warm. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--fg) / 0.14);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--fg) / 0.24);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

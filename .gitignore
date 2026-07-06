@@ -1,0 +1,26 @@
+# dependencies / build output
+node_modules/
+frontend/dist/
+frontend/node_modules/.tmp/
+
+# python
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# runtime data (ideas, categories, settings, uploaded images) — never commit
+backend/data/
+
+# secrets — Supabase keys etc. (.env.example is committed as a template)
+.env
+backend/.env
+
+# logs & local artifacts
+*.log
+shots/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
