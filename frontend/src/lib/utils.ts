@@ -9,25 +9,18 @@ export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   const secs = Math.max(1, Math.floor((Date.now() - then) / 1000));
-  const table: [number, string][] = [
-    [60, "s"],
-    [3600, "m"],
-    [86400, "h"],
-    [604800, "d"],
-    [2629800, "w"],
-  ];
   if (secs < 60) return "just now";
-  let unit = "s";
-  let value = secs;
-  for (let i = 0; i < table.length; i++) {
-    const [limit, label] = table[i];
-    if (secs < limit) break;
-    const [nextLimit] = table[i + 1] ?? [Infinity];
-    value = Math.floor(secs / limit);
-    unit = label;
-    if (secs < nextLimit) break;
+  // [size in seconds, label], largest first. Show the biggest unit that fits.
+  const units: [number, string][] = [
+    [604800, "w"],
+    [86400, "d"],
+    [3600, "h"],
+    [60, "m"],
+  ];
+  for (const [size, label] of units) {
+    if (secs >= size) return `${Math.floor(secs / size)}${label} ago`;
   }
-  return `${value}${unit} ago`;
+  return "just now";
 }
 
 /**
