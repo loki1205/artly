@@ -13,7 +13,8 @@ decide together which miniature canvas paintings to create and sell.
 - **Pluggable persistence** — ideas/categories/settings live in JSON files by
   default (zero setup), or in **Supabase Postgres** when configured. Either way
   a single write-lock serializes changes so concurrent writes can't corrupt the
-  data. Uploaded images always live in a local images folder.
+  data. Uploaded images follow the same switch: **Supabase Storage** when
+  configured (durable on diskless hosts), else a local images folder.
 
 ## Stack
 - **Frontend:** React + Vite + TypeScript + TailwindCSS + Framer Motion +
@@ -60,8 +61,8 @@ Export/Import (a zip of all of the above) is available in **Settings** or via
 `GET /api/export` / `POST /api/import`.
 
 ### Supabase (optional)
-Point the backend at Supabase Postgres for ideas/categories/settings instead of
-the JSON files (uploaded images stay local either way):
+Point the backend at Supabase for ideas/categories/settings (Postgres) and
+uploaded images (Storage) instead of the local JSON files + images folder:
 
 1. In the [Supabase](https://supabase.com) SQL editor, run
    [`backend/schema.sql`](backend/schema.sql) to create the three tables.
