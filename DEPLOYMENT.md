@@ -63,9 +63,9 @@ changes needed.
 > **Why isn't the backend on Vercel too?** It can't be. Vercel's functions are
 > *serverless*: they can't hold the open **WebSocket** Artly uses for live sync,
 > and their filesystem is ephemeral. Artly's backend is a long-running process,
-> so it needs a tiny always-on host. The good news: because the **data** lives in
-> Supabase, that host needs **no paid disk** — a free instance is enough. (Only
-> *uploaded images* still sit on the backend's local disk — see the image caveat.)
+> so it needs a tiny always-on host. The good news: because both the **data** and
+> **uploaded images** live in Supabase (Postgres + Storage), that host needs
+> **no paid disk** — a free instance is enough.
 
 **0 — Get the code on GitHub.**
 ```bash
@@ -103,11 +103,12 @@ keeps `node_modules`, `.venv`, `dist`, local `data/`, and `.env` out of commits.
       **into Supabase** (the seed uses the same env vars).
    9. Sanity check: `https://artly-api.onrender.com/api/health` → `{"ok":true,...}`.
 
-   > **Image caveat.** Reference images you *upload* are stored on the backend's
-   > local disk, which is ephemeral on a free instance — they're lost on restart
-   > or redeploy (your ideas/votes/comments in Supabase are **not**). If you rely
-   > on uploaded images, attach a small disk on the host and set
-   > `ARTLY_DATA_DIR=/data`, or add images by URL instead.
+   > **Images.** When `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` are set, uploaded
+   > images are stored in **Supabase Storage** (a public bucket named
+   > `artly-images`, auto-created on first start), so they're durable across
+   > restarts and redeploys — same as your ideas/votes/comments. No disk needed.
+   > (Without Supabase configured, images fall back to the local `data/` dir,
+   > which is ephemeral on a free instance.)
 
 **3 — Frontend on Vercel.**
    1. Vercel → **Add New → Project** → import the repo.
@@ -141,25 +142,25 @@ frontend works out of the box. To lock it down, edit `allow_origins` in
 | Var | Where | Purpose | Default |
 | --- | --- | --- | --- |
 | `SUPABASE_URL` | backend | Supabase project URL. Set with the key below to store data in Postgres. Unset → JSON files. | *(unset)* |
-| `SUPABASE_SERVICE_KEY` | backend | Supabase **service_role** key (server-side only; bypasses RLS — never expose to the browser). | *(unset)* |
+| `SUPABASE_SERVICE_KEY` | backend | Supabase **service_role** key (server-side only; bypasses RLS — never expose to the browser). Also enables image storage in Supabase Storage. | *(unset)* |
+| `SUPABASE_IMAGE_BUCKET` | backend | Storage bucket for uploaded images (auto-created, public). Only used when Supabase is configured. | `artly-images` |
 | `VITE_API_URL` | frontend build | Backend origin when the frontend is hosted separately (Vercel). Leave **unset** for the same-origin LAN build. | `""` (same origin) |
-| `ARTLY_DATA_DIR` | backend | Folder for uploaded images (and the JSON files when Supabase is off). Point at a mounted disk if you need durable images. | `backend/data` |
+| `ARTLY_DATA_DIR` | backend | JSON files + uploaded images when Supabase is **off**. Unused for persistence when Supabase is on. | `backend/data` |
 | `ARTLY_FRONTEND_DIST` | backend | Path to the built SPA the backend serves (LAN / single-server mode). | `../frontend/dist` |
 | `PORT` | backend | Port to bind; injected by most hosts. | `8000` |
 
 ### Using Supabase for data
 Run [`backend/schema.sql`](backend/schema.sql) in the Supabase SQL editor, then
 set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` on the backend. It then keeps
-ideas/categories/settings in Postgres — so board data survives with **no
-persistent disk**. With those env vars unset, the backend falls back to JSON files
-automatically. For local dev, copy `backend/.env.example` → `backend/.env` and
-fill it in (`.env` is git-ignored).
+ideas/categories/settings in Postgres **and** uploaded images in Supabase Storage
+— so the whole board survives with **no persistent disk**. With those env vars
+unset, the backend falls back to JSON files + local image storage automatically.
+For local dev, copy `backend/.env.example` → `backend/.env` and fill it in
+(`.env` is git-ignored).
 
 ## Why the backend needs its own host
-Pointing Artly at Supabase moves the *data* off local disk, but two things still
-require a long-running process (so it can't be pure serverless): the **WebSocket**
-live-sync (a persistent connection), and **image uploads** (written to local
-disk). That's why the backend runs on a small always-on host while Vercel serves
-the static frontend. Moving images to object storage (S3/R2/Supabase Storage) and
-swapping the WebSocket for hosted pub/sub would remove that requirement — a larger
-change, not needed for a small board.
+Pointing Artly at Supabase moves both the *data* and *images* off local disk, but
+the **WebSocket** live-sync still needs a persistent connection, so the backend
+can't be pure serverless. That's why it runs on a small always-on host while
+Vercel serves the static frontend. Swapping the WebSocket for hosted pub/sub would
+remove even that requirement — a larger change, not needed for a small board.
