@@ -1,19 +1,23 @@
-"""Image storage + thumbnail generation.
+"""Image validation + thumbnail generation (storage-agnostic).
 
-Files live under DATA_DIR/images/. A thumbnail (max 640px, quality 82) is written
-to DATA_DIR/images/thumbs/ with the same filename. JSON stores only filenames.
+This module only *processes* images: it validates the bytes, re-encodes the
+original honoring EXIF orientation, and builds a thumbnail (max 640px). It does
+NOT decide where the resulting bytes live — that's the ImageStore's job (local
+disk or Supabase Storage). See imagestore.py.
 """
 from __future__ import annotations
 
 import io
 import secrets
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
 ALLOWED = {".jpg", ".jpeg", ".png", ".webp"}
 _EXT_BY_FORMAT = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
+_CT_BY_EXT = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 THUMB_MAX = 640
 MAX_BYTES = 25 * 1024 * 1024  # 25 MB per image
 
@@ -22,20 +26,37 @@ class ImageError(Exception):
     pass
 
 
-def _dirs(data_dir: Path) -> tuple[Path, Path]:
-    images = data_dir / "images"
-    thumbs = images / "thumbs"
-    images.mkdir(parents=True, exist_ok=True)
-    thumbs.mkdir(parents=True, exist_ok=True)
-    return images, thumbs
+@dataclass
+class ProcessedImage:
+    """A validated image ready to store: original + thumbnail bytes."""
+
+    filename: str
+    content_type: str
+    original: bytes
+    thumbnail: bytes
 
 
 def _safe_name(ext: str) -> str:
     return f"{secrets.token_hex(12)}{ext}"
 
 
-def save_bytes(data_dir: Path, raw: bytes, original_ext: str = "") -> str:
-    """Validate, store the original, generate a thumbnail. Returns the filename."""
+def content_type_for(name: str) -> str:
+    return _CT_BY_EXT.get(Path(name).suffix.lower(), "application/octet-stream")
+
+
+def _encode(img: Image.Image, ext: str, quality: int) -> bytes:
+    out = io.BytesIO()
+    if ext == ".jpg":
+        img.convert("RGB").save(out, format="JPEG", quality=quality)
+    elif ext == ".png":
+        img.save(out, format="PNG")
+    else:  # .webp
+        img.save(out, format="WEBP", quality=quality)
+    return out.getvalue()
+
+
+def process(raw: bytes, original_ext: str = "") -> ProcessedImage:
+    """Validate the bytes and return re-encoded original + thumbnail, in memory."""
     if len(raw) > MAX_BYTES:
         raise ImageError("Image exceeds 25MB limit")
     try:
@@ -53,31 +74,19 @@ def save_bytes(data_dir: Path, raw: bytes, original_ext: str = "") -> str:
     if ext is None:
         raise ImageError("Unsupported image type (allowed: jpg, jpeg, png, webp)")
 
-    images, thumbs = _dirs(data_dir)
-    filename = _safe_name(ext)
+    img = ImageOps.exif_transpose(img)  # honor EXIF orientation
 
-    # Save the (re-encoded) original, honoring EXIF orientation.
-    img = ImageOps.exif_transpose(img)
-    save_kwargs = {}
-    save_img = img
-    if fmt in ("JPEG",) or ext == ".jpg":
-        save_img = img.convert("RGB")
-        save_kwargs = {"quality": 90}
-    save_img.save(images / filename, **save_kwargs)
+    original = _encode(img, ext, quality=90)
 
-    # Thumbnail
     thumb = img.copy()
     thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.LANCZOS)
-    if ext == ".jpg":
-        thumb = thumb.convert("RGB")
-        thumb.save(thumbs / filename, quality=82)
-    else:
-        thumb.save(thumbs / filename)
+    thumbnail = _encode(thumb, ext, quality=82)
 
-    return filename
+    return ProcessedImage(_safe_name(ext), _CT_BY_EXT[ext], original, thumbnail)
 
 
-def save_from_url(data_dir: Path, url: str) -> str:
+def fetch_url(url: str) -> tuple[bytes, str]:
+    """Download image bytes from an http(s) URL. Returns (bytes, extension)."""
     if not (url.startswith("http://") or url.startswith("https://")):
         raise ImageError("URL must be http(s)")
     try:
@@ -87,15 +96,4 @@ def save_from_url(data_dir: Path, url: str) -> str:
     except Exception as exc:  # noqa: BLE001
         raise ImageError("Could not download image from URL") from exc
     ext = Path(url.split("?")[0]).suffix.lower()
-    return save_bytes(data_dir, raw, ext)
-
-
-def delete_file(data_dir: Path, filename: str) -> None:
-    images, thumbs = _dirs(data_dir)
-    for p in (images / filename, thumbs / filename):
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+    return raw, ext
