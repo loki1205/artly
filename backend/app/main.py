@@ -2,7 +2,8 @@
 
 Serves the REST API, a WebSocket for live sync, uploaded images (with thumbnails),
 and — in production — the built frontend, all from one process. Persistence is
-JSON files + an images folder guarded by a single write-lock. No database.
+pluggable: Supabase (Postgres for data + Storage for images) when configured,
+else JSON files + a local images folder guarded by a single write-lock.
 """
 from __future__ import annotations
 
@@ -27,11 +28,12 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import images as imagelib
 from . import models as m
+from .imagestore import build_image_store
 from .persistence import build_backend
 from .realtime import hub
 from .serializers import public_idea, public_ideas
@@ -42,6 +44,10 @@ FRONTEND_DIST = Path(os.environ.get("ARTLY_FRONTEND_DIST", Path(__file__).resolv
 
 # Persists to Supabase Postgres when SUPABASE_URL + a key are set, else JSON files.
 store = Store(build_backend(DATA_DIR))
+# Uploaded image files: Supabase Storage when configured, else local disk. Keeps
+# images durable on diskless hosts (the JSON data alone surviving isn't enough —
+# it references image files that a local disk loses on restart).
+imgstore = build_image_store(DATA_DIR)
 
 
 @asynccontextmanager
@@ -145,7 +151,7 @@ async def purge_idea(iid: str, cid: Optional[str] = Depends(client_id)):
         idea = store.purge(iid)
         if idea:
             for f in idea.get("images", []):
-                imagelib.delete_file(DATA_DIR, f)
+                imgstore.delete(f)
     if not idea:
         raise HTTPException(404, "Idea not found")
     await notify("ideas", cid)
@@ -198,7 +204,7 @@ async def upload_images(
         raw = await f.read()
         try:
             ext = Path(f.filename or "").suffix
-            name = imagelib.save_bytes(DATA_DIR, raw, ext)
+            name = imgstore.save(raw, ext)
             async with store.lock:
                 store.add_image(iid, name)
             added.append(name)
@@ -206,7 +212,7 @@ async def upload_images(
             errors.append(f"{f.filename}: {exc}")
     if url:
         try:
-            name = imagelib.save_from_url(DATA_DIR, url)
+            name = imgstore.save_from_url(url)
             async with store.lock:
                 store.add_image(iid, name)
             added.append(name)
@@ -227,7 +233,7 @@ async def delete_image(iid: str, filename: str, cid: Optional[str] = Depends(cli
     if not idea:
         raise HTTPException(404, "Image not found on idea")
     if not still_used:
-        imagelib.delete_file(DATA_DIR, filename)
+        imgstore.delete(filename)
     await notify("ideas", cid)
     return public_idea(idea, cid)
 
@@ -370,11 +376,8 @@ async def export_board():
         z.writestr("ideas.json", json.dumps(store.ideas, ensure_ascii=False, indent=2))
         z.writestr("categories.json", json.dumps(store.categories, ensure_ascii=False, indent=2))
         z.writestr("settings.json", json.dumps(store.settings, ensure_ascii=False, indent=2))
-        images_dir = DATA_DIR / "images"
-        if images_dir.exists():
-            for p in images_dir.rglob("*"):
-                if p.is_file():
-                    z.write(p, f"images/{p.relative_to(images_dir).as_posix()}")
+        for relpath, data in imgstore.export_files():
+            z.writestr(f"images/{relpath}", data)
     buf.seek(0)
     return StreamingResponse(
         buf,
@@ -392,13 +395,9 @@ async def import_board(file: UploadFile = File(...), cid: Optional[str] = Depend
             ideas = json.loads(z.read("ideas.json")) if "ideas.json" in names else {}
             categories = json.loads(z.read("categories.json")) if "categories.json" in names else {}
             settings = json.loads(z.read("settings.json")) if "settings.json" in names else None
-            images_dir = DATA_DIR / "images"
-            images_dir.mkdir(parents=True, exist_ok=True)
             for name in names:
                 if name.startswith("images/") and not name.endswith("/"):
-                    target = DATA_DIR / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(z.read(name))
+                    imgstore.import_file(name[len("images/"):], z.read(name))
     except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
         raise HTTPException(400, f"Invalid Artly export: {exc}")
     async with store.lock:
@@ -422,8 +421,25 @@ async def ws_endpoint(ws: WebSocket):
 
 
 # ---- static: uploaded images + built frontend ------------------------------
-(DATA_DIR / "images").mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(DATA_DIR / "images")), name="uploads")
+@app.get("/uploads/{key:path}")
+async def serve_upload(key: str):
+    """Serve an uploaded image by key (``<file>`` or ``thumbs/<file>``).
+
+    Supabase-backed: 307-redirect to the public object URL. Local disk: serve
+    the file. The frontend builds these /uploads URLs itself, so it stays the
+    same regardless of backend.
+    """
+    if imgstore.redirects:
+        return RedirectResponse(
+            imgstore.public_url(key),
+            status_code=307,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    path = imgstore.local_path(key)
+    if path is None or not path.is_file():
+        raise HTTPException(404, "Not found")
+    return FileResponse(path)
+
 
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
